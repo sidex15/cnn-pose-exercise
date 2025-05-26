@@ -1,0 +1,56 @@
+PyTorch CNN Model Training Analysis Report
+========================================
+
+Model Status: GOOD FIT
+Final Test Accuracy: 0.9974
+Training Accuracy: 0.9990
+Validation Accuracy: 0.9974
+Accuracy Gap: 0.0016
+Loss Gap: 0.0075
+Total Parameters: 347912
+Training Epochs: 60
+Dataset Size: 31862 training samples
+Training Time: 2061.38 seconds
+
+Classification Report:
+                   precision    recall  f1-score   support
+
+      Situps Down       1.00      1.00      1.00      1956
+        Situps Up       1.00      1.00      1.00      1560
+     Pushups Down       0.99      0.99      0.99      1713
+       Pushups Up       1.00      1.00      1.00      3065
+         Squat Up       1.00      1.00      1.00      2317
+       Squat Down       1.00      1.00      1.00      1677
+  Jumping Jack Up       1.00      1.00      1.00       709
+Jumping Jack Down       1.00      1.00      1.00       659
+
+         accuracy                           1.00     13656
+        macro avg       1.00      1.00      1.00     13656
+     weighted avg       1.00      1.00      1.00     13656
+
+
+============================================================
+OVERFITTING AND UNDERFITTING ANALYSIS
+============================================================
+
+Final Training Loss: 0.0014
+Final Validation Loss: 0.0131
+Final Training Accuracy: 0.9995
+Final Validation Accuracy: 0.9973
+
+Loss Gap (Val - Train): 0.0117
+Accuracy Gap (Train - Val): 0.0022
+
+✅ BALANCED PERFORMANCE
+   Training and validation accuracies are well balanced
+
+Learning Curve Analysis:
+Training loss trend (second half): Decreasing
+Validation loss trend (second half): Decreasing
+✅ Model has converged (validation loss is stable)
+
+Model Complexity:
+Total parameters: 347,912
+Trainable parameters: 347,912
+Data-to-parameter ratio: 31862:347912
+⚠️  Dataset is smaller than number of parameters - high overfitting risk!

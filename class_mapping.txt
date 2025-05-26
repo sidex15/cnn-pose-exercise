@@ -1,0 +1,8 @@
+0: Situps Down
+1: Situps Up
+2: Pushups Down
+3: Pushups Up
+4: Squat Up
+5: Squat Down
+6: Jumping Jack Up
+7: Jumping Jack Down

@@ -1,0 +1,10 @@
+matplotlib==3.10.3
+mediapipe==0.10.21
+numpy==2.2.6
+opencv_contrib_python==4.11.0.86
+opencv_python==4.11.0.86
+pandas==2.2.3
+scikit_learn==1.6.1
+seaborn==0.13.2
+torch==2.4.1
+torch_directml==0.2.5.dev240914
