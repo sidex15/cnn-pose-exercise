@@ -9,17 +9,18 @@ import torch
 import torch_directml
 import torch.nn as nn
 import torch.optim as optim
+import torch.nn.functional as F
 from torch.utils.data import DataLoader, TensorDataset
 import pickle
 import time
 from datetime import datetime
 
 # Set device
-device = torch_directml.device()
+device = torch.device("cpu")
 print(f"Using device: {device}")
 
 # Load and prepare data
-df = pd.read_csv('posedataset.csv')
+df = pd.read_csv('newcnndataset.csv')
 print("Original dataset shape:", df.shape)
 print(df.head())
 
@@ -48,120 +49,92 @@ print("Class labels:", string_labels)
 label_encoder = LabelEncoder()
 y_encoded = label_encoder.fit_transform(y)
 
-# Normalize features
-scaler = StandardScaler()
-X_scaled = scaler.fit_transform(X)
-
 # Reshape data for CNN (samples, timesteps, features)
 # Treat each frame as having 33 timesteps (landmarks) with 2 features (x,y)
-X_reshaped = X_scaled.reshape(X_scaled.shape[0], 33, 2)
+X_reshaped = X.reshape(X.shape[0], 33, 2)
 
-# Split the data
-X_train, X_test, y_train, y_test = train_test_split(
-    X_reshaped, y_encoded, test_size=0.3, random_state=42, stratify=y_encoded
+# Three-way split
+X_train_temp, X_test, y_train_temp, y_test = train_test_split(
+    X_reshaped, y_encoded, test_size=0.2, random_state=42, stratify=y_encoded
+)
+X_train, X_val, y_train, y_val = train_test_split(
+    X_train_temp, y_train_temp, test_size=0.25, random_state=42, stratify=y_train_temp
 )
 
-print(f"Training data shape: {X_train.shape}, {y_train.shape}")
-print(f"Testing data shape: {X_test.shape}, {y_test.shape}")
+# NOW normalize ALL datasets using training statistics
+scaler = StandardScaler()
 
-# Convert to PyTorch tensors - NOTE: PyTorch Conv1D expects [batch, channels, length]
-X_train_tensor = torch.FloatTensor(X_train).permute(0, 2, 1)  # (batch, features, timesteps)
-X_test_tensor = torch.FloatTensor(X_test).permute(0, 2, 1)
+# Reshape for fitting: (samples, features)
+X_train_flat = X_train.reshape(X_train.shape[0], -1)
+X_val_flat = X_val.reshape(X_val.shape[0], -1)
+X_test_flat = X_test.reshape(X_test.shape[0], -1)
+
+# Fit scaler only on training data, transform all datasets
+X_train_scaled = scaler.fit_transform(X_train_flat)
+X_val_scaled = scaler.transform(X_val_flat)
+X_test_scaled = scaler.transform(X_test_flat)
+
+# Reshape back to (samples, timesteps, features)
+X_train_scaled = X_train_scaled.reshape(X_train.shape[0], 33, 2)
+X_val_scaled = X_val_scaled.reshape(X_val.shape[0], 33, 2)
+X_test_scaled = X_test_scaled.reshape(X_test.shape[0], 33, 2)
+
+print(f"Training data shape: {X_train_scaled.shape}, {y_train.shape}")
+print(f"Validation data shape: {X_val_scaled.shape}, {y_val.shape}")
+print(f"Testing data shape: {X_test_scaled.shape}, {y_test.shape}")
+
+# Convert to PyTorch tensors
+X_train_tensor = torch.FloatTensor(X_train_scaled).permute(0, 2, 1)
+X_val_tensor = torch.FloatTensor(X_val_scaled).permute(0, 2, 1)
+X_test_tensor = torch.FloatTensor(X_test_scaled).permute(0, 2, 1)
 y_train_tensor = torch.LongTensor(y_train)
+y_val_tensor = torch.LongTensor(y_val)
 y_test_tensor = torch.LongTensor(y_test)
 
 # Create data loaders
 train_dataset = TensorDataset(X_train_tensor, y_train_tensor)
+val_dataset = TensorDataset(X_val_tensor, y_val_tensor)
 test_dataset = TensorDataset(X_test_tensor, y_test_tensor)
 
-batch_size = 32
+batch_size = 64
 train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
+val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False)
 test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False)
-
-# Define the residual block for PyTorch
-class ResidualBlock(nn.Module):
-    def __init__(self, in_channels, out_channels, kernel_size=3):
-        super(ResidualBlock, self).__init__()
-        self.conv1 = nn.Conv1d(in_channels, out_channels, kernel_size, padding='same')
-        self.bn1 = nn.BatchNorm1d(out_channels)
-        self.relu = nn.ReLU()
-        self.conv2 = nn.Conv1d(out_channels, out_channels, kernel_size, padding='same')
-        self.bn2 = nn.BatchNorm1d(out_channels)
-        
-        # Shortcut connection
-        self.shortcut = nn.Sequential()
-        if in_channels != out_channels:
-            self.shortcut = nn.Sequential(
-                nn.Conv1d(in_channels, out_channels, kernel_size=1, padding='same'),
-                nn.BatchNorm1d(out_channels)
-            )
-    
-    def forward(self, x):
-        residual = x
-        
-        out = self.conv1(x)
-        out = self.bn1(out)
-        out = self.relu(out)
-        
-        out = self.conv2(out)
-        out = self.bn2(out)
-        
-        out += self.shortcut(residual)
-        out = self.relu(out)
-        
-        return out
 
 # Define the CNN model in PyTorch
 class ExerciseCNN(nn.Module):
-    def __init__(self, num_classes):
+    def __init__(self, num_classes=8, input_channels=2):
         super(ExerciseCNN, self).__init__()
         
-        # Initial conv layer
-        self.initial_conv = nn.Sequential(
-            nn.Conv1d(in_channels=2, out_channels=64, kernel_size=3, padding='same'),
+        self.features = nn.Sequential(
+            # Block 1
+            nn.Conv1d(input_channels, 64, kernel_size=5, padding=2),
             nn.BatchNorm1d(64),
-            nn.ReLU()
+            nn.ReLU(inplace=True),
+            nn.MaxPool1d(2),  # 33 -> 16
+            nn.Dropout(0.1),
+            
+            # Block 2
+            nn.Conv1d(64, 128, kernel_size=3, padding=1),
+            nn.BatchNorm1d(128),
+            nn.ReLU(inplace=True),
+            nn.MaxPool1d(2),  # 16 -> 8
+            nn.Dropout(0.2)
         )
         
-        # First residual block
-        self.res_block1 = ResidualBlock(64, 64)
-        self.pool1 = nn.MaxPool1d(kernel_size=2)
-        
-        # Second residual block
-        self.res_block2 = ResidualBlock(64, 128)
-        self.pool2 = nn.MaxPool1d(kernel_size=2)
-        
-        # Third residual block
-        self.res_block3 = ResidualBlock(128, 128)
-        
-        # Calculate output size after convolution and pooling
-        # Input: 33 timesteps
-        # After pool1: 33/2 = 16 (rounded down)
-        # After pool2: 16/2 = 8 (rounded down)
-        # Final size: 128 channels * 8 features = 1024
-        
-        # Classification head
         self.classifier = nn.Sequential(
             nn.Flatten(),
             nn.Linear(128 * 8, 128),
-            nn.ReLU(),
-            nn.BatchNorm1d(128),
+            nn.ReLU(inplace=True),
             nn.Dropout(0.5),
-            nn.Linear(128, 64),
-            nn.ReLU(),
-            nn.Dropout(0.3),
-            nn.Linear(64, num_classes)
+            nn.Linear(128, num_classes)
         )
-        
+    
     def forward(self, x):
-        x = self.initial_conv(x)
-        x = self.res_block1(x)
-        x = self.pool1(x)
-        x = self.res_block2(x)
-        x = self.pool2(x)
-        x = self.res_block3(x)
+        x = self.features(x)
         x = self.classifier(x)
         return x
+
 
 # Create and initialize the model
 model = ExerciseCNN(num_classes).to(device)
@@ -174,16 +147,12 @@ print(f"Total parameters: {total_params:,}")
 print(f"Trainable parameters: {trainable_params:,}")
 
 # Define loss function and optimizer
+learning_rate = 0.001  # Start conservative
+weight_decay = 1e-4  # L2 regularization
 criterion = nn.CrossEntropyLoss()
-optimizer = optim.Adam(model.parameters(), lr=0.001)
+optimizer = torch.optim.AdamW(model.parameters(), lr=learning_rate, weight_decay=weight_decay)
 scheduler = optim.lr_scheduler.ReduceLROnPlateau(
-    optimizer, 
-    mode='min',
-    factor=0.2,
-    patience=5,
-    min_lr=1e-8,
-    verbose=True,
-    cooldown=3
+    optimizer, mode='min', factor=0.5, patience=10, verbose=True
 )
 
 # Training functions
@@ -267,7 +236,7 @@ for epoch in range(num_epochs):
     train_loss, train_acc = train_epoch(model, train_loader, criterion, optimizer, device)
     
     # Validate
-    val_loss, val_acc = validate(model, test_loader, criterion, device)
+    val_loss, val_acc = validate(model, val_loader, criterion, device)
     
     # Monitor learning rate changes
     old_lr = optimizer.param_groups[0]['lr']
@@ -284,12 +253,17 @@ for epoch in range(num_epochs):
     history['val_acc'].append(val_acc)
     history['lr'].append(new_lr)
     
+    # Calculate gaps
+    loss_gap = val_loss - train_loss
+    acc_gap = train_acc - val_acc
+
     # Early stopping
     if val_acc > best_val_acc:
         best_val_acc = val_acc
         patience_counter = 0
         # Save best model
         print(f'New best validation accuracy: {best_val_acc:.4f} at epoch {epoch+1}')
+        print(f'Accuracy gap (Train - Val): {acc_gap:.4f}, Loss gap (Val - Train): {loss_gap:.4f}')
         best_model_state = model.state_dict()
         torch.save(best_model_state, 'best_exercise_cnn_model.pth')
     else:
